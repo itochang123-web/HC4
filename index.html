@@ -1,0 +1,964 @@
+<!doctype html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>H10 心率與心率變異性語音播報</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  color-scheme: light;
+  --paper: #FDF1EE;
+  --panel: #FFF8F6;
+  --grid-minor: rgba(214, 96, 86, 0.15);
+  --grid-major: rgba(200, 70, 60, 0.28);
+  --ink: #3A1519;
+  --ink-soft: #7A4A4E;
+  --trace: #C8102E;
+  --on-trace: #FFFFFF;
+  --pen: #22408F;
+  --line: rgba(122, 74, 78, 0.32);
+  --font-ui: "PingFang TC", "Microsoft JhengHei", "Barlow", "Segoe UI", sans-serif;
+  --font-num: "Barlow Condensed", "Roboto Condensed", "Arial Narrow", "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --paper: #1B0C0E;
+    --panel: #241215;
+    --grid-minor: rgba(255, 120, 110, 0.06);
+    --grid-major: rgba(255, 120, 110, 0.13);
+    --ink: #F7E4E1;
+    --ink-soft: #C9A3A0;
+    --trace: #FF5C6C;
+    --on-trace: #1B0C0E;
+    --pen: #9DB6FF;
+    --line: rgba(201, 163, 160, 0.3);
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  font: 400 1rem/1.5 var(--font-ui);
+  background-color: var(--paper);
+  /* ECG paper: 1 mm minor squares, 5 mm major squares */
+  background-image:
+    linear-gradient(var(--grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px),
+    linear-gradient(var(--grid-minor) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-minor) 1px, transparent 1px);
+  background-size: 40px 40px, 40px 40px, 8px 8px, 8px 8px;
+}
+main {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: max(1.25rem, env(safe-area-inset-top)) 1.25rem max(2.5rem, env(safe-area-inset-bottom));
+}
+h1 { font-size: 1.125rem; font-weight: 600; margin: 0; }
+#status { margin: 0.15rem 0 0; color: var(--ink-soft); font-size: 0.9375rem; }
+#status.alert { color: var(--trace); font-weight: 500; }
+
+.readout { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1.25rem; margin: 1.75rem 0 0; }
+.metric .value {
+  display: block;
+  font: 600 clamp(4.5rem, 24vw, 8.75rem)/0.86 var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+.metric.hr .value { color: var(--trace); }
+.metric.hrv .value { color: var(--pen); }
+.metric .unit { display: block; margin-top: 0.5rem; font-size: 1.0625rem; font-weight: 600; }
+.metric .detail { display: block; color: var(--ink-soft); font-size: 0.875rem; line-height: 1.35; }
+#next { margin: 1rem 0 0; color: var(--ink-soft); font-size: 0.9375rem; font-variant-numeric: tabular-nums; }
+
+.trace { position: relative; height: 274px; margin: 1.25rem 0 0.5rem; }
+.trace canvas { display: block; width: 100%; height: 100%; }
+.trace .empty {
+  position: absolute; inset: 30px 14px 82px 45px; display: grid; place-items: center;
+  padding: 0 0.75rem; text-align: center; color: var(--ink-soft); font-size: 0.9375rem;
+}
+.trace .empty[hidden] { display: none; }
+.trace-caption { margin: 0 0 1.5rem; color: var(--ink-soft); font-size: 0.8125rem; }
+
+.actions { display: flex; flex-wrap: wrap; gap: 0.625rem; }
+button, select, input { font: inherit; color: inherit; }
+button {
+  min-height: 44px; padding: 0.55rem 1.15rem;
+  border: 1.5px solid var(--line); border-radius: 999px;
+  background: var(--panel); color: var(--ink); font-weight: 500; cursor: pointer;
+}
+button.primary { background: var(--trace); border-color: var(--trace); color: var(--on-trace); font-weight: 600; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+:focus-visible { outline: 3px solid var(--pen); outline-offset: 2px; }
+
+.settings {
+  margin: 1.5rem 0 0; padding: 1rem 1.1rem;
+  background: var(--panel); border-radius: 6px;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(8.75rem, 1fr)); gap: 0.9rem 1rem;
+}
+.settings label { display: grid; gap: 0.3rem; font-size: 0.875rem; color: var(--ink-soft); }
+.settings select {
+  min-height: 42px; padding: 0.35rem 0.5rem; width: 100%;
+  border: 1.5px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink);
+}
+.settings label.check { display: flex; align-items: center; gap: 0.55rem; color: var(--ink); font-size: 0.9375rem; }
+.settings label.check input { width: 1.25rem; height: 1.25rem; margin: 0; accent-color: var(--trace); }
+.settings .hint { grid-column: 1 / -1; margin: 0; color: var(--trace); font-size: 0.875rem; }
+.settings .hint[hidden] { display: none; }
+
+.history { margin: 1.5rem 0 0; padding: 0.85rem 1.1rem 1rem; background: var(--panel); border-radius: 6px; }
+.history h2 { margin: 0 0 0.5rem; font-size: 1rem; font-weight: 600; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 0.9375rem; }
+th { text-align: left; font-weight: 500; color: var(--ink-soft); padding: 0.3rem 0.5rem 0.3rem 0; }
+td { padding: 0.35rem 0.5rem 0.35rem 0; border-top: 1px solid var(--line); }
+td.hr { color: var(--trace); font-weight: 600; }
+td.hrv { color: var(--pen); font-weight: 600; }
+td.empty { color: var(--ink-soft); }
+.history .foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem 1rem; margin-top: 0.85rem; }
+#sessionInfo { color: var(--ink-soft); font-size: 0.875rem; }
+
+.note { margin: 1.25rem 0 0; color: var(--ink-soft); font-size: 0.875rem; max-width: 34rem; }
+.note p { margin: 0 0 0.5rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>心率與心率變異性語音播報</h1>
+  <p id="status" role="status">尚未連線</p>
+
+  <section class="readout" aria-label="最新讀值">
+    <div class="metric hr">
+      <span class="value" id="hrValue">--</span>
+      <span class="unit">次／分</span>
+      <span class="detail">心率</span>
+    </div>
+    <div class="metric hrv">
+      <span class="value" id="hrvValue">--</span>
+      <span class="unit">毫秒（HRV）</span>
+      <span class="detail" id="hrvDetail">最近 30 秒的 RMSSD</span>
+    </div>
+  </section>
+  <p id="next">請先連接胸帶，開始量測。</p>
+
+  <div class="trace">
+    <canvas id="trace" role="img" aria-label="最近兩分鐘的心搏間期；縱軸為毫秒，橫軸為距今秒數；藍色區間標示 HRV 計算範圍"></canvas>
+    <div class="empty" id="traceEmpty">請先沾濕胸帶電極，戴好胸帶後再連線。</div>
+  </div>
+  <p class="trace-caption">圓圈標示被排除的心搏；藍色區間與下方橫條標示 HRV 計算範圍。</p>
+
+  <div class="actions">
+    <button class="primary" id="connectBtn" type="button">連接胸帶</button>
+    <button id="voiceBtn" type="button" disabled>暫停播報</button>
+    <button id="testBtn" type="button">測試語音</button>
+  </div>
+
+  <section class="settings" aria-label="設定">
+    <label>播報內容
+      <select id="mode">
+        <option value="both" selected>心率與心率變異性</option>
+        <option value="hr">只播報心率</option>
+        <option value="hrv">只播報心率變異性</option>
+      </select>
+    </label>
+    <label>播報間隔
+      <select id="interval">
+        <option value="15" selected>每 15 秒</option>
+        <option value="30">每 30 秒</option>
+        <option value="60">每 60 秒</option>
+      </select>
+    </label>
+    <label>心率變異性計算範圍
+      <select id="window">
+        <option value="15">最近 15 秒</option>
+        <option value="30" selected>最近 30 秒</option>
+        <option value="60">最近 60 秒</option>
+        <option value="120">最近 2 分鐘</option>
+      </select>
+    </label>
+    <label>播報語言
+      <select id="lang">
+        <option value="zh" selected>台灣華語</option>
+        <option value="en">English（英文）</option>
+      </select>
+    </label>
+    <label>語音
+      <select id="voice"><option value="">自動選擇台灣華語</option></select>
+    </label>
+    <label>播報速度
+      <select id="rate">
+        <option value="0.85">較慢</option>
+        <option value="1" selected>一般</option>
+        <option value="1.2">較快</option>
+      </select>
+    </label>
+    <label class="check"><input type="checkbox" id="brief"> 只播報數字</label>
+    <p class="hint" id="voiceHint" hidden>這台裝置尚未安裝台灣華語語音。請到裝置的語音設定中新增「中文（台灣）」語音，完成後重新載入本頁。</p>
+  </section>
+
+  <section class="history" aria-label="讀值紀錄">
+    <h2>讀值紀錄</h2>
+    <table>
+      <thead><tr><th scope="col">時間</th><th scope="col">心率</th><th scope="col">心率變異性</th><th scope="col">排除心搏</th></tr></thead>
+      <tbody id="historyBody"><tr><td class="empty" colspan="4">每次定時量測的讀值會顯示在這裡。</td></tr></tbody>
+    </table>
+    <div class="foot">
+      <span id="sessionInfo"></span>
+      <button id="downloadBtn" type="button" disabled>下載心搏資料（CSV）</button>
+    </div>
+  </section>
+
+  <div class="note">
+    <p>請保持本頁開啟，並讓螢幕維持亮起。手機可能暫停在背景執行的網頁，導致語音播報停止。</p>
+    <p>讀值表格顯示本次量測的所有紀錄，最新讀值排在最上方。</p>
+    <p>本頁以 RMSSD 計算心率變異性（HRV）。偏離近期中位數超過 20% 的心搏資料會被排除，計算相鄰差值時也不會跨越被排除的心搏。若計算範圍內超過 20% 的心搏被排除，播報末尾會加上「請檢查胸帶」（英文播報為「check strap」）。設定會儲存在本頁網址中，調整完成後可加入書籤。</p>
+  </div>
+</main>
+
+<script>
+(() => {
+'use strict';
+// ---- Core logic: pure functions, no browser APIs ----
+const RR_MIN_MS = 300;          // 200 bpm
+const RR_MAX_MS = 2000;         // 30 bpm
+const FILTER_TOLERANCE = 0.20;  // drop beats more than 20% away from the recent median
+const FILTER_HISTORY = 9;       // beats in the rolling median
+const FILTER_MIN_HISTORY = 5;   // beats needed before the median test applies
+const FILTER_RESEED_AFTER = 5;  // consistent rejected beats that signal a real heart-rate shift
+const MIN_PAIRS = 10;           // successive differences needed before HRV is reported
+const NOISY_SHARE = 0.20;       // above this share of dropped beats, the reading is flagged
+
+// Bluetooth Heart Rate Measurement characteristic (0x2A37)
+function parseHeartRateMeasurement(view) {
+  if (!view || typeof view.getUint8 !== 'function' || view.byteLength < 2) return null;
+  const flags = view.getUint8(0);
+  let offset = 1;
+  if (offset + ((flags & 0x01) ? 2 : 1) > view.byteLength) return null;
+  let hr;
+  if (flags & 0x01) { hr = view.getUint16(offset, true); offset += 2; }
+  else { hr = view.getUint8(offset); offset += 1; }
+  const contact = (flags & 0x04) ? Boolean(flags & 0x02) : null;
+  if (flags & 0x08) {
+    if (offset + 2 > view.byteLength) return null;
+    offset += 2; // energy expended, unused
+  }
+  const rr = [];
+  if (flags & 0x10) {
+    if ((view.byteLength - offset) % 2 !== 0) return null;
+    while (offset + 2 <= view.byteLength) {
+      rr.push(view.getUint16(offset, true) * 1000 / 1024); // 1/1024 s -> ms
+      offset += 2;
+    }
+  }
+  return { hr, rr, contact };
+}
+
+function median(values) {
+  const s = values.slice().sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+function withinTolerance(value, ref) {
+  return Math.abs(value - ref) / ref <= FILTER_TOLERANCE;
+}
+
+// Rolling-median artifact filter. test(rr) returns true if the beat is kept.
+function createArtifactFilter() {
+  let accepted = [];
+  let rejectedRun = [];
+  let lastPlausible = null;
+  return {
+    test(rr) {
+      if (!(rr >= RR_MIN_MS && rr <= RR_MAX_MS)) return false;
+      if (accepted.length < FILTER_MIN_HISTORY) {
+        // warm-up: keep beats that don't jump more than 20% from the previous one
+        const prev = lastPlausible;
+        lastPlausible = rr;
+        if (prev === null || withinTolerance(rr, prev)) { accepted.push(rr); return true; }
+        return false;
+      }
+      if (withinTolerance(rr, median(accepted))) {
+        accepted.push(rr);
+        if (accepted.length > FILTER_HISTORY) accepted.shift();
+        rejectedRun = [];
+        return true;
+      }
+      rejectedRun.push(rr);
+      if (rejectedRun.length >= FILTER_RESEED_AFTER) {
+        const recent = rejectedRun.slice(-FILTER_RESEED_AFTER);
+        const ref = median(recent);
+        if (recent.every(v => withinTolerance(v, ref))) {
+          accepted = recent.slice(); // heart rate genuinely moved: restart the reference
+          rejectedRun = [];
+        } else {
+          rejectedRun = rejectedRun.slice(-(FILTER_RESEED_AFTER - 1));
+        }
+      }
+      return false;
+    },
+    reset() { accepted = []; rejectedRun = []; lastPlausible = null; }
+  };
+}
+
+// RMSSD over beats that arrived in [nowMs - windowMs, nowMs].
+// beats: [{ t, rr, ok, gap? }] in arrival order. No difference is taken across
+// a dropped beat or a disconnection.
+function windowStats(beats, nowMs, windowMs) {
+  const from = nowMs - windowMs;
+  let i = beats.length - 1;
+  while (i >= 0 && beats[i].t >= from) i--;
+  let pairs = 0, sumSq = 0, total = 0, rejected = 0, prev = null;
+  for (let k = i + 1; k < beats.length; k++) {
+    const b = beats[k];
+    if (b.gap) { prev = null; continue; }
+    total++;
+    if (!b.ok) { rejected++; prev = null; continue; }
+    if (prev !== null) { const d = b.rr - prev; sumSq += d * d; pairs++; }
+    prev = b.rr;
+  }
+  return {
+    rmssd: pairs >= MIN_PAIRS ? Math.sqrt(sumSq / pairs) : null,
+    pairs,
+    beats: total,
+    rejected,
+    rejectedShare: total ? rejected / total : 0
+  };
+}
+
+// 台灣華語或英文播報。mode：'both'（兩者）、'hr'（心率）、'hrv'（心率變異性）。
+const SPEECH = {
+  en: {
+    hr: 'Heart rate', hrv: 'H R V', join: '. ', end: '.', warn: ', check strap',
+    notReady: 'H R V not ready yet', notReadyBrief: 'Not ready',
+    noSignal: 'No heart rate signal.', noSignalBrief: 'No signal.',
+    noContact: 'No skin contact. Check the strap.', noContactBrief: 'No contact.',
+    disconnected: 'Strap disconnected.', reconnected: 'Strap reconnected.', connecting: 'Connecting'
+  },
+  zh: {
+    hr: '心率', hrv: '心率變異性', join: '。', end: '。', warn: '，請檢查胸帶',
+    notReady: '心率變異性計算中', notReadyBrief: '計算中',
+    noSignal: '沒有心率訊號。', noSignalBrief: '沒有訊號。',
+    noContact: '胸帶沒有接觸到皮膚，請檢查胸帶。', noContactBrief: '接觸不良。',
+    disconnected: '胸帶已斷線。', reconnected: '胸帶已重新連線。', connecting: '連線中'
+  }
+};
+
+function phrase(hr, stats, opts = {}) {
+  const L = SPEECH[opts.lang] || SPEECH.zh;
+  const brief = Boolean(opts.brief);
+  const mode = opts.mode === 'hr' || opts.mode === 'hrv' ? opts.mode : 'both';
+  if (opts.contact === false) return brief ? L.noContactBrief : L.noContact;
+  if (hr == null) return brief ? L.noSignalBrief : L.noSignal;
+  const ready = Boolean(stats) && stats.rmssd != null;
+  const parts = [];
+  if (mode !== 'hrv') parts.push(brief ? `${Math.round(hr)}` : `${L.hr} ${Math.round(hr)}`);
+  if (mode !== 'hr') {
+    if (ready) parts.push(brief ? `${Math.round(stats.rmssd)}` : `${L.hrv} ${Math.round(stats.rmssd)}`);
+    else if (!brief) parts.push(L.notReady);
+    else if (mode === 'hrv') parts.push(L.notReadyBrief);
+  }
+  const noisy = ready && stats.rejectedShare > NOISY_SHARE;
+  return parts.join(L.join) + (noisy ? L.warn : '') + L.end;
+}
+
+// 依播報語言列出英文或台灣華語語音；中文不使用其他地區的語音。
+function isTaiwanMandarin(v) { return /^(zh|cmn)[-_](Hant[-_])?TW\b/i.test(v.lang); }
+function voicesFor(all, lang = 'zh') {
+  return all.filter(lang === 'en' ? v => /^en(?:[-_]|$)/i.test(v.lang) : isTaiwanMandarin);
+}
+function autoVoice(all, lang = 'zh') {
+  return voicesFor(all, lang)[0] || null;
+}
+// ---- end core ----
+
+
+const $ = id => document.getElementById(id);
+const els = {
+  status: $('status'), hr: $('hrValue'), hrv: $('hrvValue'), hrvDetail: $('hrvDetail'), next: $('next'),
+  canvas: $('trace'), traceEmpty: $('traceEmpty'),
+  connect: $('connectBtn'), voiceBtn: $('voiceBtn'), test: $('testBtn'),
+  interval: $('interval'), window: $('window'), voice: $('voice'), rate: $('rate'), brief: $('brief'),
+  mode: $('mode'), lang: $('lang'), voiceHint: $('voiceHint'),
+  history: $('historyBody'), sessionInfo: $('sessionInfo'), download: $('downloadBtn')
+};
+
+const HR_SERVICE = 'heart_rate', HR_CHAR = 'heart_rate_measurement';
+const BATT_SERVICE = 'battery_service', BATT_CHAR = 'battery_level';
+const TRACE_SPAN_MS = 120000, STALE_MS = 5000, MAX_BEATS = 200000, MAX_RECONNECTS = 8;
+
+const state = {
+  device: null, characteristic: null, connected: false, connecting: false, userDisconnect: false,
+  reconnectAttempts: 0, reconnectTimer: null,
+  beats: [], filter: createArtifactFilter(),
+  lastHr: null, lastPacketAt: 0, contact: null, staleShown: false,
+  voiceOn: true, lastReadingAt: 0, readings: [],
+  wakeLock: null, sessionStart: null, battery: null, ticker: null
+};
+
+const settings = () => ({
+  intervalMs: Number(els.interval.value) * 1000,
+  windowMs: Number(els.window.value) * 1000,
+  rate: Number(els.rate.value),
+  brief: els.brief.checked,
+  mode: els.mode.value,
+  lang: els.lang.value === 'en' ? 'en' : 'zh'
+});
+const words = () => SPEECH[settings().lang];
+
+function setStatus(text, alert = false) {
+  els.status.textContent = text;
+  els.status.classList.toggle('alert', alert);
+}
+
+/* ---------- speech ---------- */
+const synth = 'speechSynthesis' in window ? window.speechSynthesis : null;
+let voices = [];
+let speechTimer = null;
+
+function cancelSpeech() {
+  clearTimeout(speechTimer);
+  speechTimer = null;
+  if (synth) synth.cancel();
+}
+
+function loadVoices() {
+  if (!synth) return;
+  voices = synth.getVoices();
+  const lang = settings().lang;
+  const current = els.voice.value;
+  const list = voicesFor(voices, lang);
+  const label = lang === 'en' ? '英文' : '台灣華語';
+  els.voice.innerHTML = `<option value="">自動選擇${label}</option>`;
+  for (const v of list) {
+    const o = document.createElement('option');
+    o.value = v.voiceURI;
+    o.textContent = `${v.name}（${label}）`;
+    els.voice.appendChild(o);
+  }
+  els.voice.value = list.some(v => v.voiceURI === current) ? current : '';
+  els.voiceHint.textContent = lang === 'en'
+    ? '這台裝置尚未提供英文語音。請到裝置的語音設定中新增英文語音，完成後重新載入本頁。'
+    : '這台裝置尚未安裝台灣華語語音。請到裝置的語音設定中新增「中文（台灣）」語音，完成後重新載入本頁。';
+  els.voiceHint.hidden = !(voices.length > 0 && list.length === 0);
+}
+
+function speak(text, volume = 1) {
+  if (!synth) return;
+  clearTimeout(speechTimer);
+  speechTimer = null;
+  const s = settings();
+  const u = new SpeechSynthesisUtterance(text);
+  const chosen = voicesFor(voices, s.lang).find(v => v.voiceURI === els.voice.value) || autoVoice(voices, s.lang);
+  if (chosen) u.voice = chosen;
+  u.lang = s.lang === 'en' ? (chosen ? chosen.lang : 'en-US') : 'zh-TW';
+  u.rate = s.rate;
+  u.volume = volume;
+  synth.resume();
+  if (synth.speaking || synth.pending) {
+    synth.cancel();
+    speechTimer = setTimeout(() => { speechTimer = null; synth.speak(u); }, 60);
+  } else {
+    synth.speak(u);
+  }
+}
+
+/* ---------- settings kept in the page address ---------- */
+const URL_KEYS = { say: 'mode', every: 'interval', window: 'window', lang: 'lang', speed: 'rate' };
+function applyUrlSettings() {
+  let q;
+  try { q = new URLSearchParams(location.search); } catch (_) { return; }
+  for (const [key, id] of Object.entries(URL_KEYS)) {
+    const v = q.get(key);
+    if (v != null && Array.from(els[id].options || []).some(o => o.value === v)) els[id].value = v;
+  }
+  if (q.get('brief') === '1') els.brief.checked = true;
+}
+function saveUrlSettings() {
+  try {
+    const q = new URLSearchParams();
+    for (const [key, id] of Object.entries(URL_KEYS)) q.set(key, els[id].value);
+    if (els.brief.checked) q.set('brief', '1');
+    history.replaceState(null, '', `${location.pathname}?${q.toString()}`);
+  } catch (_) { /* preview frames may block this; settings still work for this visit */ }
+}
+
+/* ---------- bluetooth ---------- */
+async function connect() {
+  if (!navigator.bluetooth) { showUnsupported(); return; }
+  if (state.connecting || state.connected) return;
+  state.connecting = true;
+  els.connect.disabled = true;
+  speak(words().connecting, 0); // unlocks speech on phones: the first utterance must come from a tap
+  setStatus('請從清單中選擇你的 Polar H10。');
+  try {
+    const device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'Polar H10' }, { services: [HR_SERVICE] }],
+      optionalServices: [HR_SERVICE, BATT_SERVICE]
+    });
+    if (state.device && state.device !== device) {
+      state.device.removeEventListener('gattserverdisconnected', onDisconnected);
+    }
+    if (state.device !== device) device.addEventListener('gattserverdisconnected', onDisconnected);
+    state.device = device;
+    state.userDisconnect = false;
+    state.reconnectAttempts = 0;
+    await openConnection();
+    startSession();
+  } catch (err) {
+    if (!state.connected && state.device && state.device.gatt.connected) {
+      state.userDisconnect = true;
+      state.device.gatt.disconnect();
+    }
+    handleConnectError(err);
+  } finally {
+    state.connecting = false;
+    els.connect.disabled = false;
+  }
+}
+
+async function openConnection() {
+  setStatus('正在連接胸帶。');
+  const server = await state.device.gatt.connect();
+  const service = await server.getPrimaryService(HR_SERVICE);
+  const ch = await service.getCharacteristic(HR_CHAR);
+  if (state.characteristic) state.characteristic.removeEventListener('characteristicvaluechanged', onMeasurement);
+  state.characteristic = ch;
+  ch.addEventListener('characteristicvaluechanged', onMeasurement);
+  await ch.startNotifications();
+  state.connected = true;
+  state.reconnectAttempts = 0;
+  state.lastPacketAt = Date.now();
+  state.contact = null;
+  try {
+    const bs = await server.getPrimaryService(BATT_SERVICE);
+    const bc = await bs.getCharacteristic(BATT_CHAR);
+    state.battery = (await bc.readValue()).getUint8(0);
+  } catch (_) {
+    state.battery = null;
+  }
+  updateConnectedStatus();
+  els.connect.textContent = '中斷連線';
+  els.connect.classList.remove('primary');
+  els.voiceBtn.disabled = false;
+  requestWakeLock();
+}
+
+function handleConnectError(err) {
+  const name = err && err.name;
+  if (name === 'NotFoundError') {
+    setStatus('尚未選擇胸帶。請先沾濕電極、戴好胸帶，再試一次。');
+  } else if (name === 'SecurityError' || name === 'NotAllowedError') {
+    setStatus('這個頁面無法使用藍牙。請直接使用 Chrome 或 Edge 開啟檔案，不要使用預覽模式。', true);
+  } else {
+    setStatus('無法連線。請確認胸帶已戴好、靠近裝置，且沒有其他應用程式連接胸帶，再試一次。', true);
+  }
+  if (!state.connected) setDisconnectedUI(null);
+}
+
+function updateConnectedStatus() {
+  if (!state.connected) return;
+  if (state.contact === false) {
+    setStatus('胸帶未接觸到皮膚。請沾濕電極，並調整胸帶鬆緊。', true);
+    return;
+  }
+  const name = state.device && state.device.name ? state.device.name : '胸帶';
+  const batt = state.battery != null ? `，電量 ${state.battery}%` : '';
+  setStatus(`已連接 ${name}${batt}`);
+}
+
+function startSession() {
+  if (!state.sessionStart) state.sessionStart = Date.now();
+  state.lastReadingAt = Date.now();
+  els.traceEmpty.hidden = true;
+  els.download.disabled = false;
+  if (!state.ticker) state.ticker = setInterval(tick, 1000);
+  tick();
+}
+
+function onMeasurement(event) {
+  if (!state.connected) return;
+  const m = parseHeartRateMeasurement(event.target.value);
+  if (!m) return;
+  const now = Date.now();
+  state.lastPacketAt = now;
+  const contactChanged = m.contact !== state.contact;
+  state.contact = m.contact;
+  state.lastHr = (m.contact === false || !m.hr) ? null : m.hr;
+  for (const rr of m.rr) {
+    state.beats.push({ t: now, rr, ok: m.contact === false ? false : state.filter.test(rr) });
+  }
+  if (state.beats.length > MAX_BEATS) state.beats.splice(0, state.beats.length - MAX_BEATS);
+  if (contactChanged || state.staleShown) { state.staleShown = false; updateConnectedStatus(); }
+  renderLive(now);
+  maybeRead(now);
+}
+
+function onDisconnected() {
+  state.connected = false;
+  state.lastHr = null;
+  state.contact = null;
+  state.beats.push({ t: Date.now(), rr: null, ok: false, gap: true });
+  state.filter.reset();
+  renderLive(Date.now());
+  if (state.userDisconnect) { setDisconnectedUI('已中斷連線'); return; }
+  if (state.voiceOn) speak(words().disconnected);
+  scheduleReconnect();
+}
+
+function scheduleReconnect() {
+  if (state.reconnectAttempts >= MAX_RECONNECTS) {
+    state.reconnectTimer = null;
+    setDisconnectedUI('無法重新連線。請確認胸帶已戴好，再點選「連接胸帶」。', true);
+    return;
+  }
+  const delay = Math.min(15000, 1000 * 2 ** state.reconnectAttempts);
+  state.reconnectAttempts++;
+  setStatus(`胸帶連線已中斷。正在重新連線（第 ${state.reconnectAttempts} 次，共 ${MAX_RECONNECTS} 次）。`, true);
+  state.reconnectTimer = setTimeout(async () => {
+    state.reconnectTimer = null;
+    if (state.userDisconnect) return;
+    state.connecting = true;
+    els.connect.disabled = true;
+    try {
+      await openConnection();
+      state.lastReadingAt = Date.now();
+      if (state.voiceOn) speak(words().reconnected);
+    } catch (_) {
+      scheduleReconnect();
+    } finally {
+      state.connecting = false;
+      els.connect.disabled = false;
+    }
+  }, delay);
+}
+
+function disconnect() {
+  state.userDisconnect = true;
+  clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = null;
+  if (state.device && state.device.gatt.connected) {
+    state.device.gatt.disconnect(); // fires gattserverdisconnected
+  } else {
+    state.connected = false;
+    setDisconnectedUI('已中斷連線');
+  }
+}
+
+function setDisconnectedUI(message, alert = false) {
+  if (message) setStatus(message, alert);
+  els.connect.textContent = '連接胸帶';
+  els.connect.classList.add('primary');
+  els.voiceBtn.disabled = true;
+  els.next.textContent = '請先連接胸帶，開始量測。';
+  renderLive(Date.now());
+  releaseWakeLock();
+}
+
+/* ---------- readings ---------- */
+function windowLabel(ms) { return ms >= 60000 && ms % 60000 === 0 ? `最近 ${ms / 60000} 分鐘` : `最近 ${ms / 1000} 秒`; }
+
+function renderLive(now) {
+  const s = settings();
+  const stats = windowStats(state.beats, now, s.windowMs);
+  const fresh = state.connected && now - state.lastPacketAt <= STALE_MS;
+  const hasSignal = fresh && state.contact !== false && state.lastHr != null;
+  els.hr.textContent = hasSignal ? Math.round(state.lastHr) : '--';
+  els.hrv.textContent = hasSignal && stats.rmssd != null ? Math.round(stats.rmssd) : '--';
+  let detail = `${windowLabel(s.windowMs)}的 RMSSD`;
+  if (!state.connected) detail += '，胸帶尚未連線';
+  else if (state.contact === false) detail += '，請檢查胸帶接觸';
+  else if (!hasSignal) detail += '，等待胸帶訊號';
+  else if (stats.rmssd == null) detail += '，正在收集心搏資料';
+  else if (stats.rejected) detail += `，已排除 ${Math.round(stats.rejectedShare * 100)}% 的心搏`;
+  els.hrvDetail.textContent = detail;
+  drawTrace(now);
+}
+
+function maybeRead(now) {
+  if (!state.connected) return;
+  const s = settings();
+  if (now - state.lastReadingAt < s.intervalMs) return;
+  state.lastReadingAt = now;
+  const stale = now - state.lastPacketAt > STALE_MS;
+  const hr = stale ? null : state.lastHr;
+  const stats = windowStats(state.beats, now, s.windowMs);
+  const text = phrase(hr, stats, { brief: s.brief, mode: s.mode, lang: s.lang, contact: stale ? null : state.contact });
+  if (state.voiceOn) speak(text);
+  addReading({ t: now, hr, rmssd: hr == null ? null : stats.rmssd, rejectedShare: stats.rejectedShare });
+}
+
+let renderedReadingCount = 0;
+function renderHistory() {
+  // 只加入新讀值，不重新建立舊列；本次量測的所有讀值都持續保留。
+  const pending = state.readings.slice(renderedReadingCount);
+  if (!pending.length) return;
+  const rows = pending.reverse().map(x => {
+    const time = new Date(x.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    const hr = x.hr != null ? Math.round(x.hr) : '--';
+    const hrv = x.rmssd != null ? `${Math.round(x.rmssd)} 毫秒` : '--';
+    const dropped = x.rmssd != null ? `${Math.round(x.rejectedShare * 100)}%` : '--';
+    return `<tr><td>${time}</td><td class="hr">${hr}</td><td class="hrv">${hrv}</td><td>${dropped}</td></tr>`;
+  });
+  if (renderedReadingCount === 0) els.history.innerHTML = '';
+  els.history.insertAdjacentHTML('afterbegin', rows.join(''));
+  renderedReadingCount = state.readings.length;
+}
+
+function addReading(r) {
+  state.readings.push(r);
+  renderHistory();
+  const beatCount = state.beats.reduce((n, b) => n + (b.gap ? 0 : 1), 0);
+  const n = state.readings.length;
+  els.sessionInfo.textContent = `已記錄 ${n} 筆讀值、${beatCount} 筆心搏資料`;
+}
+
+function tick() {
+  const now = Date.now();
+  renderLive(now);
+  if (!state.connected) return;
+  maybeRead(now);
+  const s = settings();
+  const remaining = Math.max(0, Math.ceil((state.lastReadingAt + s.intervalMs - now) / 1000));
+  els.next.textContent = state.voiceOn ? `${remaining} 秒後取得下一筆讀值` : `語音已暫停。${remaining} 秒後取得下一筆讀值`;
+  if (now - state.lastPacketAt > STALE_MS) {
+    els.hr.textContent = '--';
+    if (!state.staleShown) {
+      state.staleShown = true;
+      setStatus('未收到胸帶資料。請確認胸帶已戴在胸前，並靠近這台裝置。', true);
+    }
+  }
+}
+
+/* ---------- trace ---------- */
+const ctx2d = els.canvas.getContext('2d');
+function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+// Plot and RMSSD use the same arrival timestamps and the same "now".
+// A packet can contain more than one RR value, so some points can share an x position.
+function traceModel(beats, nowMs, windowMs, width, height) {
+  const plot = { left: 45, right: width - 14, top: 30, bottom: height - 82 };
+  const from = nowMs - TRACE_SPAN_MS;
+  const points = [];
+  for (let i = beats.length - 1; i >= 0; i--) {
+    const b = beats[i];
+    if (b.t < from) break;
+    if (b.t <= nowMs) points.push(b);
+  }
+  points.reverse();
+  let low = Infinity, high = -Infinity;
+  for (const b of points) {
+    if (b.gap || !b.ok || !Number.isFinite(b.rr)) continue;
+    low = Math.min(low, b.rr);
+    high = Math.max(high, b.rr);
+  }
+  if (!Number.isFinite(low)) { low = 700; high = 1100; }
+  const pad = Math.max(25, (high - low) * 0.18);
+  const roughStep = (high - low + 2 * pad) / 4;
+  const power = 10 ** Math.floor(Math.log10(roughStep));
+  const scaled = roughStep / power;
+  const step = (scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 5 ? 5 : 10) * power;
+  low = Math.max(0, Math.floor((low - pad) / step) * step);
+  high = Math.ceil((high + pad) / step) * step;
+  const X = t => plot.left + (t - from) / TRACE_SPAN_MS * (plot.right - plot.left);
+  const Y = rr => plot.bottom - (rr - low) / (high - low) * (plot.bottom - plot.top);
+  const yTicks = [];
+  for (let value = low; value <= high + step / 2; value += step) yTicks.push(value);
+  const span = Math.min(TRACE_SPAN_MS, Math.max(0, windowMs));
+  return { plot, points, X, Y, low, high, yTicks,
+    windowStartX: X(nowMs - span), windowEndX: plot.right,
+    xTicks: [120, 90, 60, 30, 0].map(seconds => ({ seconds, x: X(nowMs - seconds * 1000) }))
+  };
+}
+
+function drawTrace(nowMs) {
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const w = els.canvas.clientWidth, h = els.canvas.clientHeight;
+  if (!w || !h || !ctx2d) return;
+  const dpr = window.devicePixelRatio || 1;
+  const pw = Math.round(w * dpr), ph = Math.round(h * dpr);
+  if (els.canvas.width !== pw || els.canvas.height !== ph) { els.canvas.width = pw; els.canvas.height = ph; }
+  ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx2d.clearRect(0, 0, w, h);
+  const windowMs = settings().windowMs;
+  const { plot, points, X, Y, yTicks, xTicks, windowStartX, windowEndX } = traceModel(state.beats, now, windowMs, w, h);
+  const ink = cssVar('--ink-soft'), grid = cssVar('--line'), pen = cssVar('--pen');
+  const font = cssVar('--font-ui');
+  const plotHeight = plot.bottom - plot.top;
+
+  // A matching shaded area makes the bar easy to relate to the plotted beats.
+  ctx2d.save();
+  ctx2d.fillStyle = pen;
+  ctx2d.globalAlpha = 0.08;
+  ctx2d.fillRect(windowStartX, plot.top, windowEndX - windowStartX, plotHeight);
+  ctx2d.restore();
+
+  ctx2d.font = `12px ${font}`;
+  ctx2d.textBaseline = 'middle';
+  ctx2d.strokeStyle = grid;
+  ctx2d.lineWidth = 0.75;
+  ctx2d.fillStyle = ink;
+  for (const value of yTicks) {
+    const y = Y(value);
+    ctx2d.beginPath(); ctx2d.moveTo(plot.left, y); ctx2d.lineTo(plot.right, y); ctx2d.stroke();
+    ctx2d.textAlign = 'right';
+    ctx2d.fillText(String(value), plot.left - 8, y);
+  }
+  for (const tick of xTicks) {
+    ctx2d.beginPath(); ctx2d.moveTo(tick.x, plot.top); ctx2d.lineTo(tick.x, plot.bottom); ctx2d.stroke();
+    ctx2d.textAlign = 'center';
+    ctx2d.fillText(String(tick.seconds), tick.x, plot.bottom + 16);
+  }
+
+  ctx2d.strokeStyle = ink;
+  ctx2d.lineWidth = 1;
+  ctx2d.beginPath();
+  ctx2d.moveTo(plot.left, plot.top); ctx2d.lineTo(plot.left, plot.bottom); ctx2d.lineTo(plot.right, plot.bottom);
+  ctx2d.stroke();
+  ctx2d.textAlign = 'left';
+  ctx2d.font = `500 13px ${font}`;
+  ctx2d.fillText('心搏間期（毫秒）', 0, 12);
+  ctx2d.textAlign = 'center';
+  ctx2d.font = `12px ${font}`;
+  ctx2d.fillText('時間（秒前；0 = 現在）', (plot.left + plot.right) / 2, plot.bottom + 36);
+
+  // The bar uses the exact same scale as the x-axis: 15 / 30 / 60 / 120 seconds.
+  const barY = plot.bottom + 53;
+  ctx2d.strokeStyle = grid;
+  ctx2d.lineWidth = 2;
+  ctx2d.beginPath(); ctx2d.moveTo(plot.left, barY); ctx2d.lineTo(plot.right, barY); ctx2d.stroke();
+  ctx2d.strokeStyle = pen;
+  ctx2d.lineWidth = 7;
+  ctx2d.beginPath(); ctx2d.moveTo(windowStartX, barY); ctx2d.lineTo(windowEndX, barY); ctx2d.stroke();
+  ctx2d.lineWidth = 1.5;
+  ctx2d.beginPath();
+  ctx2d.moveTo(windowStartX, barY - 6); ctx2d.lineTo(windowStartX, barY + 6);
+  ctx2d.moveTo(windowEndX, barY - 6); ctx2d.lineTo(windowEndX, barY + 6);
+  ctx2d.stroke();
+  ctx2d.textAlign = 'right';
+  ctx2d.fillStyle = pen;
+  ctx2d.font = `500 13px ${font}`;
+  ctx2d.fillText(`HRV 計算範圍：${windowLabel(windowMs)}`, plot.right, barY + 20);
+
+  // Clip the trace and dropped-beat markers to the labelled plotting area.
+  ctx2d.save();
+  ctx2d.beginPath(); ctx2d.rect(plot.left, plot.top, plot.right - plot.left, plotHeight); ctx2d.clip();
+  ctx2d.strokeStyle = cssVar('--trace');
+  ctx2d.lineWidth = 2;
+  ctx2d.lineJoin = 'round';
+  ctx2d.beginPath();
+  let drawing = false;
+  for (const b of points) {
+    if (b.gap || !b.ok || !Number.isFinite(b.rr)) { drawing = false; continue; }
+    const x = X(b.t), y = Y(b.rr);
+    if (drawing) ctx2d.lineTo(x, y); else { ctx2d.moveTo(x, y); drawing = true; }
+  }
+  ctx2d.stroke();
+  ctx2d.strokeStyle = pen;
+  ctx2d.lineWidth = 1.5;
+  for (const b of points) {
+    if (!b.gap && !b.ok && Number.isFinite(b.rr)) {
+      const y = Math.min(plot.bottom - 4, Math.max(plot.top + 4, Y(b.rr)));
+      ctx2d.beginPath(); ctx2d.arc(X(b.t), y, 3.5, 0, Math.PI * 2); ctx2d.stroke();
+    }
+  }
+  ctx2d.restore();
+  const seconds = windowMs / 1000;
+  els.canvas.setAttribute('aria-label', `最近兩分鐘的心搏間期；縱軸為毫秒，橫軸為距今秒數；藍色區間標示最近 ${seconds} 秒的 HRV 計算範圍`);
+}
+
+/* ---------- screen wake lock ---------- */
+async function requestWakeLock() {
+  if (!('wakeLock' in navigator) || state.wakeLock) return;
+  try {
+    state.wakeLock = await navigator.wakeLock.request('screen');
+    state.wakeLock.addEventListener('release', () => { state.wakeLock = null; });
+  } catch (_) { /* not permitted here; the note on the page covers it */ }
+}
+function releaseWakeLock() {
+  if (state.wakeLock) { state.wakeLock.release().catch(() => {}); state.wakeLock = null; }
+}
+
+/* ---------- CSV ---------- */
+function downloadCsv() {
+  const lines = ['時間_ISO,心搏間期_毫秒,是否採用,事件'];
+  for (const b of state.beats) {
+    const iso = new Date(b.t).toISOString();
+    lines.push(b.gap ? `${iso},,,斷線` : `${iso},${b.rr.toFixed(1)},${b.ok ? 1 : 0},`);
+  }
+  const blob = new Blob(['\uFEFF' + lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const stamp = new Date(state.sessionStart || Date.now()).toISOString().slice(0, 16).replace(/[-:T]/g, '');
+  a.href = url;
+  a.download = `H10-心搏資料-${stamp}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function showUnsupported() {
+  setStatus('這個瀏覽器不支援藍牙連線。電腦或 Android 手機請使用 Chrome 或 Edge；iPhone 請使用 Bluefy 瀏覽器。', true);
+  els.connect.disabled = true;
+}
+
+/* ---------- wiring ---------- */
+els.connect.addEventListener('click', () => {
+  if (state.connected || state.reconnectTimer) disconnect(); else connect();
+});
+els.voiceBtn.addEventListener('click', () => {
+  state.voiceOn = !state.voiceOn;
+  els.voiceBtn.textContent = state.voiceOn ? '暫停播報' : '繼續播報';
+  if (!state.voiceOn) cancelSpeech();
+  tick();
+});
+els.test.addEventListener('click', () => {
+  const s = settings();
+  speak(phrase(60, { rmssd: 50, rejectedShare: 0 }, { brief: s.brief, mode: s.mode, lang: s.lang, contact: true }));
+});
+els.download.addEventListener('click', downloadCsv);
+els.interval.addEventListener('change', () => { saveUrlSettings(); tick(); });
+els.window.addEventListener('change', () => { saveUrlSettings(); renderLive(Date.now()); });
+els.lang.addEventListener('change', () => { cancelSpeech(); els.voice.value = ''; loadVoices(); saveUrlSettings(); });
+for (const el of [els.mode, els.rate, els.brief]) el.addEventListener('change', saveUrlSettings);
+window.addEventListener('resize', drawTrace);
+if (window.matchMedia) {
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', drawTrace);
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    if (state.connected) requestWakeLock();
+  }
+});
+
+applyUrlSettings();
+drawTrace();
+if (synth) {
+  loadVoices();
+  if (synth.addEventListener) synth.addEventListener('voiceschanged', loadVoices);
+  else synth.onvoiceschanged = loadVoices;
+} else {
+  els.test.disabled = true;
+  els.next.textContent = '這個瀏覽器不支援語音播報，畫面上的數值仍會持續更新。';
+}
+
+if (window.isSecureContext === false) {
+  setStatus('藍牙需要安全的網頁環境。請直接使用 Chrome 或 Edge 開啟此檔案，或透過 HTTPS 網址開啟。', true);
+  els.connect.disabled = true;
+} else if (!navigator.bluetooth) {
+  showUnsupported();
+} else if (navigator.bluetooth.getAvailability) {
+  navigator.bluetooth.getAvailability().then(ok => {
+    if (!ok) setStatus('這台裝置的藍牙尚未開啟或無法使用。請先開啟藍牙，再連接胸帶。', true);
+  }).catch(() => {});
+}
+})();
+</script>
+</body>
+</html>
